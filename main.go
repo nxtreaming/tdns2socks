@@ -120,6 +120,18 @@ var (
 	configProxyMu  sync.RWMutex
 )
 
+func extractAnswerSection(response *dns.Msg) string {
+	if response == nil {
+		return ""
+	}
+
+	var answerSection string
+	for _, ans := range response.Answer {
+		answerSection += ans.String() + "\n"
+	}
+	return answerSection
+}
+
 // QueryDNS queries DNS through a SOCKS5 proxy using the specified protocol (TCP or UDP)
 func QueryDNS(domain string, config ProxyConfig, upDNS string) (*dns.Msg, error) {
 	// Create a SOCKS5 dialer
@@ -130,6 +142,7 @@ func QueryDNS(domain string, config ProxyConfig, upDNS string) (*dns.Msg, error)
 	}
 	dialer, err := proxy.SOCKS5(config.Protocol, proxyAddr, auth, proxy.Direct)
 	if err != nil {
+		log.Printf("Failed to create SOCKS5 dialer: %v", err)
 		return nil, err
 	}
 
@@ -138,35 +151,56 @@ func QueryDNS(domain string, config ProxyConfig, upDNS string) (*dns.Msg, error)
 	msg.SetQuestion(dns.Fqdn(domain), dns.TypeA)
 	buf, err := msg.Pack()
 	if err != nil {
+		log.Printf("Failed to pack DNS query: %v", err)
 		return nil, err
 	}
+
+	// Prepend the length of the DNS query (2 bytes) for TCP transport
+	tcpBuf := make([]byte, 2+len(buf))
+	tcpBuf[0] = byte(len(buf) >> 8)
+	tcpBuf[1] = byte(len(buf))
+	copy(tcpBuf[2:], buf)
+
+	// Log the packed DNS query
+	log.Printf("Packed DNS query (with length): %x", tcpBuf)
 
 	// Create a unique connection for this query
 	conn, err := dialer.Dial(config.Protocol, upDNS)
 	if err != nil {
+		log.Printf("Failed to dial to upstream DNS server: %v", err)
 		return nil, err
 	}
 	defer conn.Close()
 
 	// Send DNS query
-	if _, err := conn.Write(buf); err != nil {
+	log.Printf("Sending DNS query for domain: %s using protocol: %s", domain, config.Protocol)
+	if _, err := conn.Write(tcpBuf); err != nil {
+		log.Printf("Failed to write to connection: %v", err)
 		return nil, err
 	}
 
 	// Read DNS response
 	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-	responseBuf := make([]byte, 512)
+	responseBuf := make([]byte, 1024) // Increase buffer size for larger responses
 	n, err := conn.Read(responseBuf)
 	if err != nil {
+		log.Printf("Failed to read response: %v", err)
+		if n > 0 {
+			log.Printf("Partial response received: %x", responseBuf[:n])
+		}
 		return nil, err
 	}
+	log.Printf("Received response length: %d", n)
+	log.Printf("Received response data: %x", responseBuf[:n])
 
+	// Remove the length prefix before unpacking the response
 	response := new(dns.Msg)
-	if err := response.Unpack(responseBuf[:n]); err != nil {
+	if err := response.Unpack(responseBuf[2:n]); err != nil {
+		log.Printf("Failed to unpack DNS response: %v", err)
 		return nil, err
 	}
 
-	log.Printf("DNS query for domain: %s succeeded using %s. Response: %v\n", domain, config.Protocol, response)
+	log.Printf("DNS query for domain: %s succeeded. Response: %v", domain, extractAnswerSection(response))
 
 	return response, nil
 }
@@ -182,7 +216,16 @@ func DNSHandler(w dns.ResponseWriter, req *dns.Msg) {
 		return
 	}
 
-	domain := req.Question[0].Name
+	question := req.Question[0]
+	domain := question.Name
+
+	// Only process "A Record"
+	if question.Qtype != dns.TypeA {
+		m.SetRcode(req, dns.RcodeNotImplemented)
+		w.WriteMsg(m)
+		return
+	}
+
 	sourceIP, _, _ := net.SplitHostPort(w.RemoteAddr().String())
 
 	// Check cache
@@ -221,13 +264,13 @@ func DNSHandler(w dns.ResponseWriter, req *dns.Msg) {
 	upDNS := upstreamDNSConfig.UpDNS
 	configDnsMu.RUnlock()
 
-	log.Printf("Received DNS query for domain: %s from source IP: %s\n", domain, sourceIP)
+	log.Printf("Received DNS query for domain: %s from source IP: %s", domain, sourceIP)
 
 	response, err := QueryDNS(domain, config, upDNS)
 	if err != nil {
 		m.SetRcode(req, dns.RcodeServerFailure)
 		w.WriteMsg(m)
-		log.Printf("DNS query for domain: %s failed: %v\n", domain, err)
+		log.Printf("DNS query for domain: %s failed: %v", domain, err)
 		return
 	}
 
@@ -235,7 +278,10 @@ func DNSHandler(w dns.ResponseWriter, req *dns.Msg) {
 	cache.Put(domain, response)
 
 	m.Answer = response.Answer
-	w.WriteMsg(m)
+	log.Printf("Writing DNS response for domain: %s", domain)
+	if err := w.WriteMsg(m); err != nil {
+		log.Printf("Failed to write DNS response: %v", err)
+	}
 }
 
 // UpdateProxyConfig updates the proxy configuration
@@ -282,7 +328,7 @@ func main() {
 		Port:     1080,
 		Username: "defaultUsername",
 		Password: "defaultPassword",
-		Protocol: "udp", // Default use: UDP
+		Protocol: "tcp", // Default use: TCP
 	}
 	upDNSMap["default"] = UpDNSConfig{UpDNS: defaultUpDNS}
 
