@@ -4,8 +4,8 @@ import (
 	"container/list"
 	"github.com/gin-gonic/gin"
 	"github.com/miekg/dns"
+	"github.com/sirupsen/logrus"
 	"golang.org/x/net/proxy"
-	"log"
 	"net"
 	"os"
 	"os/signal"
@@ -120,6 +120,8 @@ var (
 	configProxyMu  sync.RWMutex
 )
 
+var log = logrus.New()
+
 func extractAnswerSection(response *dns.Msg) string {
 	if response == nil {
 		return ""
@@ -142,7 +144,7 @@ func QueryDNS(domain string, config ProxyConfig, upDNS string) (*dns.Msg, error)
 	}
 	dialer, err := proxy.SOCKS5(config.Protocol, proxyAddr, auth, proxy.Direct)
 	if err != nil {
-		log.Printf("Failed to create SOCKS5 dialer: %v", err)
+		log.Errorf("Failed to create SOCKS5 dialer: %v", err)
 		return nil, err
 	}
 
@@ -151,7 +153,7 @@ func QueryDNS(domain string, config ProxyConfig, upDNS string) (*dns.Msg, error)
 	msg.SetQuestion(dns.Fqdn(domain), dns.TypeA)
 	buf, err := msg.Pack()
 	if err != nil {
-		log.Printf("Failed to pack DNS query: %v", err)
+		log.Errorf("Failed to pack DNS query: %v", err)
 		return nil, err
 	}
 
@@ -162,20 +164,20 @@ func QueryDNS(domain string, config ProxyConfig, upDNS string) (*dns.Msg, error)
 	copy(tcpBuf[2:], buf)
 
 	// Log the packed DNS query
-	log.Printf("Packed DNS query (with length): %x", tcpBuf)
+	log.Debugf("Packed DNS query (with length): %x", tcpBuf)
 
 	// Create a unique connection for this query
 	conn, err := dialer.Dial(config.Protocol, upDNS)
 	if err != nil {
-		log.Printf("Failed to dial to upstream DNS server: %v", err)
+		log.Errorf("Failed to dial to upstream DNS server: %v", err)
 		return nil, err
 	}
 	defer conn.Close()
 
 	// Send DNS query
-	log.Printf("Sending DNS query for domain: %s using protocol: %s", domain, config.Protocol)
+	log.Infof("Sending DNS query for domain: %s using protocol: %s", domain, config.Protocol)
 	if _, err := conn.Write(tcpBuf); err != nil {
-		log.Printf("Failed to write to connection: %v", err)
+		log.Errorf("Failed to write to connection: %v", err)
 		return nil, err
 	}
 
@@ -184,23 +186,23 @@ func QueryDNS(domain string, config ProxyConfig, upDNS string) (*dns.Msg, error)
 	responseBuf := make([]byte, 1024) // Increase buffer size for larger responses
 	n, err := conn.Read(responseBuf)
 	if err != nil {
-		log.Printf("Failed to read response: %v", err)
+		log.Errorf("Failed to read response: %v", err)
 		if n > 0 {
-			log.Printf("Partial response received: %x", responseBuf[:n])
+			log.Warnf("Partial response received: %x", responseBuf[:n])
 		}
 		return nil, err
 	}
-	log.Printf("Received response length: %d", n)
-	log.Printf("Received response data: %x", responseBuf[:n])
+	log.Debugf("Received response length: %d", n)
+	log.Debugf("Received response data: %x", responseBuf[:n])
 
 	// Remove the length prefix before unpacking the response
 	response := new(dns.Msg)
 	if err := response.Unpack(responseBuf[2:n]); err != nil {
-		log.Printf("Failed to unpack DNS response: %v", err)
+		log.Errorf("Failed to unpack DNS response: %v", err)
 		return nil, err
 	}
 
-	log.Printf("DNS query for domain: %s succeeded. Response: %v", domain, extractAnswerSection(response))
+	log.Infof("DNS query for domain: %s succeeded. Response: %v", domain, extractAnswerSection(response))
 
 	return response, nil
 }
@@ -236,7 +238,7 @@ func DNSHandler(w dns.ResponseWriter, req *dns.Msg) {
 	}
 
 	if cachedMsg, found := cache.Get(domain); found {
-		log.Printf("Cache hit for domain: %s from source IP: %s\n", domain, sourceIP)
+		log.Infof("Cache hit for domain: %s from source IP: %s", domain, sourceIP)
 		m.Answer = cachedMsg.Answer
 		w.WriteMsg(m)
 		return
@@ -264,13 +266,13 @@ func DNSHandler(w dns.ResponseWriter, req *dns.Msg) {
 	upDNS := upstreamDNSConfig.UpDNS
 	configDnsMu.RUnlock()
 
-	log.Printf("Received DNS query for domain: %s from source IP: %s", domain, sourceIP)
+	log.Infof("Received DNS query for domain: %s from source IP: %s", domain, sourceIP)
 
 	response, err := QueryDNS(domain, config, upDNS)
 	if err != nil {
 		m.SetRcode(req, dns.RcodeServerFailure)
 		w.WriteMsg(m)
-		log.Printf("DNS query for domain: %s failed: %v", domain, err)
+		log.Errorf("DNS query for domain: %s failed: %v", domain, err)
 		return
 	}
 
@@ -278,9 +280,9 @@ func DNSHandler(w dns.ResponseWriter, req *dns.Msg) {
 	cache.Put(domain, response)
 
 	m.Answer = response.Answer
-	log.Printf("Writing DNS response for domain: %s", domain)
+	log.Infof("Writing DNS response for domain: %s", domain)
 	if err := w.WriteMsg(m); err != nil {
-		log.Printf("Failed to write DNS response: %v", err)
+		log.Errorf("Failed to write DNS response: %v", err)
 	}
 }
 
@@ -322,13 +324,17 @@ func main() {
 	// Set Gin mode to release
 	gin.SetMode(gin.ReleaseMode)
 
+	// Set logrus to log to stdout and set log level to Info
+	log.SetOutput(os.Stdout)
+	log.SetLevel(logrus.InfoLevel)
+
 	// Initialize default proxy and upstream DNS configuration
 	proxyConfigMap["default"] = ProxyConfig{
 		Server:   "default.proxy.server",
 		Port:     1080,
 		Username: "defaultUsername",
 		Password: "defaultPassword",
-		Protocol: "tcp", // Default use: TCP
+		Protocol: "tcp", // Default use TCP
 	}
 	upDNSMap["default"] = UpDNSConfig{UpDNS: defaultUpDNS}
 
