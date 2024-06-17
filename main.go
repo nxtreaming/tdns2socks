@@ -21,6 +21,7 @@ type ProxyConfig struct {
 	Port     int    `json:"port"`
 	Username string `json:"username"`
 	Password string `json:"password"`
+	Protocol string `json:"protocol"` // "tcp" or "udp"
 }
 
 // UpDNSConfig represents the configuration for an upstream DNS server
@@ -119,7 +120,7 @@ var (
 	configProxyMu  sync.RWMutex
 )
 
-// QueryDNS queries DNS through a SOCKS5 proxy using a unique connection for each query
+// QueryDNS queries DNS through a SOCKS5 proxy using the specified protocol (TCP or UDP)
 func QueryDNS(domain string, config ProxyConfig, upDNS string) (*dns.Msg, error) {
 	// Create a SOCKS5 dialer
 	proxyAddr := net.JoinHostPort(config.Server, strconv.Itoa(config.Port))
@@ -127,7 +128,7 @@ func QueryDNS(domain string, config ProxyConfig, upDNS string) (*dns.Msg, error)
 		User:     config.Username,
 		Password: config.Password,
 	}
-	dialer, err := proxy.SOCKS5("udp", proxyAddr, auth, proxy.Direct)
+	dialer, err := proxy.SOCKS5(config.Protocol, proxyAddr, auth, proxy.Direct)
 	if err != nil {
 		return nil, err
 	}
@@ -140,8 +141,8 @@ func QueryDNS(domain string, config ProxyConfig, upDNS string) (*dns.Msg, error)
 		return nil, err
 	}
 
-	// Create a unique UDP connection for this query
-	conn, err := dialer.Dial("udp", upDNS)
+	// Create a unique connection for this query
+	conn, err := dialer.Dial(config.Protocol, upDNS)
 	if err != nil {
 		return nil, err
 	}
@@ -165,7 +166,7 @@ func QueryDNS(domain string, config ProxyConfig, upDNS string) (*dns.Msg, error)
 		return nil, err
 	}
 
-	log.Printf("DNS query for domain: %s succeeded. Response: %v\n", domain, response)
+	log.Printf("DNS query for domain: %s succeeded using %s. Response: %v\n", domain, config.Protocol, response)
 
 	return response, nil
 }
@@ -281,6 +282,7 @@ func main() {
 		Port:     1080,
 		Username: "defaultUsername",
 		Password: "defaultPassword",
+		Protocol: "udp", // Default use: UDP
 	}
 	upDNSMap["default"] = UpDNSConfig{UpDNS: defaultUpDNS}
 
