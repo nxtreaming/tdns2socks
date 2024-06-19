@@ -384,19 +384,18 @@ func queryUDP(domain string, proxyConfig ProxyConfig, upDNS string) (*dns.Msg, e
 
 // QueryDNS queries DNS through a SOCKS5 proxy using the specified protocol (TCP or UDP)
 func QueryDNS(domain string, config ProxyConfig, upDNS string) (*dns.Msg, error) {
-	// Create a SOCKS5 dialer
-	proxyAddr := net.JoinHostPort(config.Server, strconv.Itoa(config.Port))
-	auth := &proxy.Auth{
-		User:     config.Username,
-		Password: config.Password,
-	}
-	dialer, err := proxy.SOCKS5("tcp", proxyAddr, auth, proxy.Direct)
-	if err != nil {
-		log.Errorf("Failed to create SOCKS5 dialer: %v", err)
-		return nil, err
-	}
-
 	if config.Protocol == "tcp" {
+		// Create a SOCKS5 dialer
+		proxyAddr := net.JoinHostPort(config.Server, strconv.Itoa(config.Port))
+		auth := &proxy.Auth{
+			User:     config.Username,
+			Password: config.Password,
+		}
+		dialer, err := proxy.SOCKS5("tcp", proxyAddr, auth, proxy.Direct)
+		if err != nil {
+			log.Errorf("Failed to create SOCKS5 dialer: %v", err)
+			return nil, err
+		}
 		return queryTCP(domain, dialer, upDNS)
 	} else if config.Protocol == "udp" {
 		return queryUDP(domain, config, upDNS)
