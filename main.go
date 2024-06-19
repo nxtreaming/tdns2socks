@@ -203,28 +203,32 @@ func socks5UDPAssociate(proxyAddr, username, password string) (*net.UDPConn, net
 
 	log.Debugf("Connected to SOCKS5 proxy at %s", proxyAddr)
 
-	// SOCKS5 handshake with username/password authentication
+	var authCode byte = 0x00
 	if username != "" && password != "" {
-		// Initial greeting
-		_, err = conn.Write([]byte{0x05, 0x01, 0x02}) // SOCKS5, 1 auth method, username/password
-		if err != nil {
-			conn.Close()
-			return nil, nil, fmt.Errorf("failed to write initial handshake: %v", err)
-		}
+		authCode = 0x02
+	}
 
-		// Read greeting response
-		response := make([]byte, 2)
-		_, err = conn.Read(response)
-		if err != nil {
-			conn.Close()
-			return nil, nil, fmt.Errorf("failed to read initial handshake response: %v", err)
-		}
+	// Initial handshake
+	_, err = conn.Write([]byte{0x05, 0x01, authCode})
+	if err != nil {
+		conn.Close()
+		return nil, nil, fmt.Errorf("failed to write initial handshake: %v", err)
+	}
 
-		if response[0] != 0x05 || response[1] != 0x02 {
-			conn.Close()
-			return nil, nil, fmt.Errorf("unexpected initial handshake response: %v", response)
-		}
+	// Read handshake response
+	response := make([]byte, 2)
+	_, err = conn.Read(response)
+	if err != nil {
+		conn.Close()
+		return nil, nil, fmt.Errorf("failed to read initial handshake response: %v", err)
+	}
 
+	if response[0] != 0x05 || response[1] != authCode {
+		conn.Close()
+		return nil, nil, fmt.Errorf("unexpected initial handshake response: %v", response)
+	}
+
+	if authCode != 0x00 {
 		// Username/Password authentication
 		authMsg := []byte{0x01, byte(len(username))}
 		authMsg = append(authMsg, []byte(username)...)
@@ -249,26 +253,6 @@ func socks5UDPAssociate(proxyAddr, username, password string) (*net.UDPConn, net
 			conn.Close()
 			return nil, nil, fmt.Errorf("auth failed: %v", authResponse)
 		}
-	} else {
-		// Initial greeting without authentication
-		_, err = conn.Write([]byte{0x05, 0x01, 0x00}) // SOCKS5, 1 auth method, no auth
-		if err != nil {
-			conn.Close()
-			return nil, nil, fmt.Errorf("failed to write initial handshake: %v", err)
-		}
-
-		// Read greeting response
-		response := make([]byte, 2)
-		_, err = conn.Read(response)
-		if err != nil {
-			conn.Close()
-			return nil, nil, fmt.Errorf("failed to read initial handshake response: %v", err)
-		}
-
-		if response[0] != 0x05 || response[1] != 0x00 {
-			conn.Close()
-			return nil, nil, fmt.Errorf("unexpected initial handshake response: %v", response)
-		}
 	}
 
 	log.Debugf("SOCKS5 handshake completed")
@@ -287,7 +271,7 @@ func socks5UDPAssociate(proxyAddr, username, password string) (*net.UDPConn, net
 
 	log.Debugf("UDP ASSOCIATE request sent")
 
-	response := make([]byte, 10)
+	response = make([]byte, 10)
 	_, err = conn.Read(response)
 	if err != nil {
 		conn.Close()
