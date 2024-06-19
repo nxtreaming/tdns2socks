@@ -179,8 +179,7 @@ func queryTCP(domain string, dialer proxy.Dialer, upDNS string) (*dns.Msg, error
 		}
 		return nil, err
 	}
-	log.Debugf("Received response length: %d", n)
-	log.Debugf("Received response data: %x", responseBuf[:n])
+	log.Debugf("Received response length: %d, data:%x", n, responseBuf[:n])
 
 	// Remove the length prefix before unpacking the response
 	response := new(dns.Msg)
@@ -200,7 +199,6 @@ func socks5UDPAssociate(proxyAddr, username, password string) (*net.UDPConn, net
 	if err != nil {
 		return nil, nil, fmt.Errorf("failed to connect to proxy: %v", err)
 	}
-
 	log.Debugf("Connected to SOCKS5 proxy at %s", proxyAddr)
 
 	var authCode byte = 0x00
@@ -254,7 +252,6 @@ func socks5UDPAssociate(proxyAddr, username, password string) (*net.UDPConn, net
 			return nil, nil, fmt.Errorf("auth failed: %v", authResponse)
 		}
 	}
-
 	log.Debugf("SOCKS5 handshake completed")
 
 	// Send UDP ASSOCIATE request
@@ -268,7 +265,6 @@ func socks5UDPAssociate(proxyAddr, username, password string) (*net.UDPConn, net
 		conn.Close()
 		return nil, nil, fmt.Errorf("failed to send UDP ASSOCIATE request: %v", err)
 	}
-
 	log.Debugf("UDP ASSOCIATE request sent")
 
 	response = make([]byte, 10)
@@ -277,7 +273,6 @@ func socks5UDPAssociate(proxyAddr, username, password string) (*net.UDPConn, net
 		conn.Close()
 		return nil, nil, fmt.Errorf("failed to read UDP ASSOCIATE response: %v", err)
 	}
-
 	log.Debugf("UDP ASSOCIATE response received: %v", response)
 
 	if response[1] != 0x00 {
@@ -291,7 +286,6 @@ func socks5UDPAssociate(proxyAddr, username, password string) (*net.UDPConn, net
 		IP:   proxyIP,
 		Port: int(proxyPort),
 	}
-
 	log.Debugf("Proxy UDP address: %v", proxyUDPAddr)
 
 	udpConn, err := net.DialUDP("udp", nil, proxyUDPAddr)
@@ -312,7 +306,9 @@ func queryUDP(domain string, proxyConfig ProxyConfig, upDNS string) (*dns.Msg, e
 		return nil, err
 	}
 	defer udpConn.Close()
-	defer tcpConn.Close() // Close the TCP connection after UDP communication is done
+	// Close the TCP connection after UDP communication is done, The UDP communication
+	// would be closed immediately by socks5 sever if the TCP connection is closed.
+	defer tcpConn.Close()
 
 	// Create DNS query
 	msg := new(dns.Msg)
@@ -328,7 +324,6 @@ func queryUDP(domain string, proxyConfig ProxyConfig, upDNS string) (*dns.Msg, e
 		log.Errorf("Failed to resolve target address: %v", err)
 		return nil, err
 	}
-
 	log.Debugf("Resolved target address: %v", targetAddr)
 
 	// Prepare the UDP packet
@@ -360,7 +355,6 @@ func queryUDP(domain string, proxyConfig ProxyConfig, upDNS string) (*dns.Msg, e
 		log.Errorf("Failed to read UDP response: %v", err)
 		return nil, err
 	}
-
 	log.Debugf("Received UDP response from %v, data: %x", addr, responseBuf[:n])
 
 	// Remove the SOCKS5 UDP header
@@ -371,9 +365,9 @@ func queryUDP(domain string, proxyConfig ProxyConfig, upDNS string) (*dns.Msg, e
 
 	// Unpack the response
 	response := new(dns.Msg)
-	if err := response.Unpack(udpResponseData); err != nil { // Use the correct length
+	if err := response.Unpack(udpResponseData); err != nil {
 		log.Errorf("Failed to unpack DNS response: %v", err)
-		log.Errorf("UDP response data: %x", udpResponseData) // Log the response data for debugging
+		log.Errorf("UDP response data: %x", udpResponseData)
 		return nil, err
 	}
 
