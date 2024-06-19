@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -130,11 +131,22 @@ func extractAnswerSection(response *dns.Msg) string {
 		return ""
 	}
 
-	var answerSection string
+	var answerLines []string
 	for _, ans := range response.Answer {
-		answerSection += ans.String() + "\n"
+		// Convert the answer to string and replace tabs with spaces
+		cleanedAnswer := strings.ReplaceAll(ans.String(), "\t", " ")
+
+		// Split the cleaned answer line into parts
+		parts := strings.Fields(cleanedAnswer)
+
+		// Extract the relevant parts (domain and IP address)
+		if len(parts) >= 5 {
+			filteredAnswer := fmt.Sprintf("%s %s %s", parts[0], parts[3], parts[4])
+			answerLines = append(answerLines, filteredAnswer)
+		}
 	}
-	return answerSection
+	// Join all lines with a newline character and add an additional newline at the end
+	return strings.Join(answerLines, "\n") + "\n"
 }
 
 // queryTCP handles DNS queries over TCP
