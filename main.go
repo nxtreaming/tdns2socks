@@ -9,6 +9,7 @@ import (
 	"github.com/miekg/dns"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/net/proxy"
+	"gopkg.in/ini.v1"
 	"net"
 	"os"
 	"os/signal"
@@ -523,6 +524,33 @@ func UpdateUpDNSConfig(c *gin.Context) {
 	c.JSON(200, gin.H{"status": "Upstream DNS configuration updated"})
 }
 
+type DNSConfig struct {
+	Server   string
+	Port     int
+	Username string
+	Password string
+	Protocol string
+}
+
+type Config struct {
+	DNSServer DNSConfig
+}
+
+func loadConfig(file string) (*Config, error) {
+	cfg, err := ini.Load(file)
+	if err != nil {
+		return nil, err
+	}
+
+	config := &Config{}
+	err = cfg.Section("DefaultDNS").MapTo(&config.DNSServer)
+	if err != nil {
+		return nil, err
+	}
+
+	return config, nil
+}
+
 func main() {
 	// Set Gin mode to release
 	gin.SetMode(gin.ReleaseMode)
@@ -531,13 +559,18 @@ func main() {
 	log.SetOutput(os.Stdout)
 	log.SetLevel(logrus.InfoLevel)
 
+	config, err := loadConfig("config.ini")
+	if err != nil {
+		log.Fatalf("Failed to read config file: %v", err)
+		return
+	}
 	// Initialize default proxy and upstream DNS configuration
 	proxyConfigMap["default"] = ProxyConfig{
-		Server:   "default.proxy.server",
-		Port:     1080,
-		Username: "defaultUsername",
-		Password: "defaultPassword",
-		Protocol: "tcp", // Default use TCP
+		Server:   config.DNSServer.Server,
+		Port:     config.DNSServer.Port,
+		Username: config.DNSServer.Username,
+		Password: config.DNSServer.Password,
+		Protocol: config.DNSServer.Protocol,
 	}
 	upDNSMap["default"] = UpDNSConfig{UpDNS: defaultUpDNS}
 
