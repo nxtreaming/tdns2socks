@@ -524,7 +524,7 @@ func UpdateUpDNSConfig(c *gin.Context) {
 	c.JSON(200, gin.H{"status": "Upstream DNS configuration updated"})
 }
 
-type DNSConfig struct {
+type ProxyFileConfig struct {
 	Server   string
 	Port     int
 	Username string
@@ -532,18 +532,25 @@ type DNSConfig struct {
 	Protocol string
 }
 
-type Config struct {
-	DNSServer DNSConfig
+type LanFileConfig struct {
+	IP          string
+	UpDNS       string
+	ProxyConfig ProxyFileConfig
 }
 
-func loadConfig(file string) (*Config, error) {
+type FileConfig struct {
+	ProxyServer ProxyFileConfig
+	LanConfig   LanFileConfig
+}
+
+func loadConfig(file string) (*FileConfig, error) {
 	cfg, err := ini.Load(file)
 	if err != nil {
 		return nil, err
 	}
 
-	config := &Config{}
-	err = cfg.Section("DefaultDNS").MapTo(&config.DNSServer)
+	config := &FileConfig{}
+	err = cfg.Section("ProxyServer").MapTo(&config.ProxyServer)
 	if err != nil {
 		return nil, err
 	}
@@ -566,11 +573,11 @@ func main() {
 	}
 	// Initialize default proxy and upstream DNS configuration
 	proxyConfigMap["default"] = ProxyConfig{
-		Server:   config.DNSServer.Server,
-		Port:     config.DNSServer.Port,
-		Username: config.DNSServer.Username,
-		Password: config.DNSServer.Password,
-		Protocol: config.DNSServer.Protocol,
+		Server:   config.ProxyServer.Server,
+		Port:     config.ProxyServer.Port,
+		Username: config.ProxyServer.Username,
+		Password: config.ProxyServer.Password,
+		Protocol: config.ProxyServer.Protocol,
 	}
 	upDNSMap["default"] = UpDNSConfig{UpDNS: defaultUpDNS}
 
