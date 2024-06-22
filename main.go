@@ -76,10 +76,27 @@ func (c *Cache) Get(key string) (*dns.Msg, bool) {
 	return nil, false
 }
 
+// cleanExpiredLocked clean the expired entry from the locked cache
+func (c *Cache) cleanExpiredLocked() {
+	now := time.Now()
+	var next *list.Element
+
+	for el := c.lru.Front(); el != nil; el = next {
+		next = el.Next()
+		entry := el.Value.(*entry)
+		if entry.value.ExpiresAt.Before(now) {
+			c.lru.Remove(el)
+			delete(c.entries, entry.key)
+		}
+	}
+}
+
 // Put adds a DNS response to the cache
 func (c *Cache) Put(key string, msg *dns.Msg) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.cleanExpiredLocked()
+
 	if el, found := c.entries[key]; found {
 		c.lru.MoveToFront(el)
 		el.Value.(*entry).value = CacheEntry{
