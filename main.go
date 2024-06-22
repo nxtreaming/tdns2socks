@@ -77,7 +77,7 @@ func (c *Cache) Get(key string) (*dns.Msg, bool) {
 	return nil, false
 }
 
-// cleanExpiredLocked clean the expired entry from the locked cache
+// cleanExpiredLocked cleans the expired entries from the locked cache
 func (c *Cache) cleanExpiredLocked() {
 	now := time.Now()
 	var next *list.Element
@@ -180,100 +180,110 @@ func executeDNSQuery(domain string, conn net.Conn, upDNS, protocol string) (*dns
 	}
 
 	if protocol == "tcp" {
-		// Prepend the length of the DNS query (2 bytes) for TCP transport
-		tcpBuf := make([]byte, 2+len(buf))
-		tcpBuf[0] = byte(len(buf) >> 8)
-		tcpBuf[1] = byte(len(buf))
-		copy(tcpBuf[2:], buf)
-
-		// Send DNS query
-		log.Debugf("Sending DNS query for domain: %s using protocol: tcp", domain)
-		if _, err := conn.Write(tcpBuf); err != nil {
-			log.Errorf("Failed to write to connection: %v", err)
-			return nil, err
-		}
-
-		// Read DNS response
-		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-		responseBuf := make([]byte, 1024) // Increase buffer size for larger responses
-		n, err := conn.Read(responseBuf)
-		if err != nil {
-			log.Errorf("Failed to read response: %v", err)
-			if n > 0 {
-				log.Warnf("Partial response received: %x", responseBuf[:n])
-			}
-			return nil, err
-		}
-		log.Debugf("Received response length: %d, data:%x", n, responseBuf[:n])
-
-		// Remove the length prefix before unpacking the response
-		response := new(dns.Msg)
-		if err := response.Unpack(responseBuf[2:n]); err != nil {
-			log.Errorf("Failed to unpack DNS response: %v", err)
-			return nil, err
-		}
-
-		log.Infof("DNS query for domain: %s succeeded. Response: %v", domain, extractAnswerSection(response))
-		return response, nil
+		return executeDNSQueryTCP(domain, conn, buf)
 	} else if protocol == "udp" {
-		targetAddr, err := net.ResolveUDPAddr("udp", upDNS)
-		if err != nil {
-			log.Errorf("Failed to resolve target address: %v", err)
-			return nil, err
-		}
-		log.Debugf("Resolved target address: %v", targetAddr)
-
-		// Prepare the UDP packet
-		var udpBuf bytes.Buffer
-		udpBuf.WriteByte(0x00) // RSV
-		udpBuf.WriteByte(0x00) // RSV
-		udpBuf.WriteByte(0x00) // FRAG
-		udpBuf.WriteByte(0x01) // ATYP (IPv4)
-		udpBuf.Write(targetAddr.IP.To4())
-		binary.Write(&udpBuf, binary.BigEndian, uint16(targetAddr.Port))
-		udpBuf.Write(buf)
-
-		log.Debugf("Constructed UDP packet data: %x", udpBuf.Bytes())
-
-		// Send UDP packet to SOCKS5 proxy server
-		log.Debugf("Sending UDP packet to proxy server")
-		if _, err := conn.(*net.UDPConn).Write(udpBuf.Bytes()); err != nil {
-			log.Errorf("Failed to send UDP data: %v", err)
-			return nil, err
-		}
-
-		// Set read deadline
-		conn.SetReadDeadline(time.Now().Add(5 * time.Second))
-
-		// Receive response
-		responseBuf := make([]byte, 1024)
-		n, addr, err := conn.(*net.UDPConn).ReadFrom(responseBuf)
-		if err != nil {
-			log.Errorf("Failed to read UDP response: %v", err)
-			return nil, err
-		}
-		log.Debugf("Received UDP response from %v, data: %x", addr, responseBuf[:n])
-
-		// Remove the SOCKS5 UDP header and check for a minimum DNS response length
-		const minDNSResponseLength = 12 // DNS header + at least one RR
-		if n < 10+minDNSResponseLength {
-			return nil, fmt.Errorf("invalid UDP response length")
-		}
-		udpResponseData := responseBuf[10:n]
-
-		// Unpack the response
-		response := new(dns.Msg)
-		if err := response.Unpack(udpResponseData); err != nil {
-			log.Errorf("Failed to unpack DNS response: %v", err)
-			log.Errorf("UDP response data: %x", udpResponseData)
-			return nil, err
-		}
-
-		log.Infof("DNS query for domain: %s succeeded. Response: %v", domain, extractAnswerSection(response))
-		return response, nil
+		return executeDNSQueryUDP(domain, conn, buf, upDNS)
 	}
 
 	return nil, fmt.Errorf("Unsupported protocol: %s", protocol)
+}
+
+// executeDNSQueryTCP performs the DNS query over TCP
+func executeDNSQueryTCP(domain string, conn net.Conn, buf []byte) (*dns.Msg, error) {
+	// Prepend the length of the DNS query (2 bytes) for TCP transport
+	tcpBuf := make([]byte, 2+len(buf))
+	tcpBuf[0] = byte(len(buf) >> 8)
+	tcpBuf[1] = byte(len(buf))
+	copy(tcpBuf[2:], buf)
+
+	// Send DNS query
+	log.Debugf("Sending DNS query for domain: %s using protocol: tcp", domain)
+	if _, err := conn.Write(tcpBuf); err != nil {
+		log.Errorf("Failed to write to connection: %v", err)
+		return nil, err
+	}
+
+	// Read DNS response
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	responseBuf := make([]byte, 1024) // Increase buffer size for larger responses
+	n, err := conn.Read(responseBuf)
+	if err != nil {
+		log.Errorf("Failed to read response: %v", err)
+		if n > 0 {
+			log.Warnf("Partial response received: %x", responseBuf[:n])
+		}
+		return nil, err
+	}
+	log.Debugf("Received response length: %d, data:%x", n, responseBuf[:n])
+
+	// Remove the length prefix before unpacking the response
+	response := new(dns.Msg)
+	if err := response.Unpack(responseBuf[2:n]); err != nil {
+		log.Errorf("Failed to unpack DNS response: %v", err)
+		return nil, err
+	}
+
+	log.Infof("DNS query for domain: %s succeeded. Response: %v", domain, extractAnswerSection(response))
+	return response, nil
+}
+
+// executeDNSQueryUDP performs the DNS query over UDP
+func executeDNSQueryUDP(domain string, conn net.Conn, buf []byte, upDNS string) (*dns.Msg, error) {
+	targetAddr, err := net.ResolveUDPAddr("udp", upDNS)
+	if err != nil {
+		log.Errorf("Failed to resolve target address: %v", err)
+		return nil, err
+	}
+	log.Debugf("Resolved target address: %v", targetAddr)
+
+	// Prepare the UDP packet
+	var udpBuf bytes.Buffer
+	udpBuf.WriteByte(0x00) // RSV
+	udpBuf.WriteByte(0x00) // RSV
+	udpBuf.WriteByte(0x00) // FRAG
+	udpBuf.WriteByte(0x01) // ATYP (IPv4)
+	udpBuf.Write(targetAddr.IP.To4())
+	binary.Write(&udpBuf, binary.BigEndian, uint16(targetAddr.Port))
+	udpBuf.Write(buf)
+
+	log.Debugf("Constructed UDP packet data: %x", udpBuf.Bytes())
+
+	// Send UDP packet to SOCKS5 proxy server
+	log.Debugf("Sending UDP packet to proxy server")
+	if _, err := conn.(*net.UDPConn).Write(udpBuf.Bytes()); err != nil {
+		log.Errorf("Failed to send UDP data: %v", err)
+		return nil, err
+	}
+
+	// Set read deadline
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+
+	// Receive response
+	responseBuf := make([]byte, 1024)
+	n, addr, err := conn.(*net.UDPConn).ReadFrom(responseBuf)
+	if err != nil {
+		log.Errorf("Failed to read UDP response: %v", err)
+		return nil, err
+	}
+	log.Debugf("Received UDP response from %v, data: %x", addr, responseBuf[:n])
+
+	// Remove the SOCKS5 UDP header and check for a minimum DNS response length
+	const minDNSResponseLength = 12 // DNS header + at least one RR
+	if n < 10+minDNSResponseLength {
+		return nil, fmt.Errorf("invalid UDP response length")
+	}
+	udpResponseData := responseBuf[10:n]
+
+	// Unpack the response
+	response := new(dns.Msg)
+	if err := response.Unpack(udpResponseData); err != nil {
+		log.Errorf("Failed to unpack DNS response: %v", err)
+		log.Errorf("UDP response data: %x", udpResponseData)
+		return nil, err
+	}
+
+	log.Infof("DNS query for domain: %s succeeded. Response: %v", domain, extractAnswerSection(response))
+	return response, nil
 }
 
 // queryTCP handles DNS queries over TCP
