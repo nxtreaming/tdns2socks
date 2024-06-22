@@ -533,14 +533,18 @@ type ProxyFileConfig struct {
 }
 
 type LanFileConfig struct {
-	IP          string
-	UpDNS       string
-	ProxyConfig ProxyFileConfig
+	IP       string
+	UpDNS    string
+	Server   string
+	Port     int
+	Username string
+	Password string
+	Protocol string
 }
 
 type FileConfig struct {
 	ProxyServer ProxyFileConfig
-	LanConfig   LanFileConfig
+	LanConfigs  []LanFileConfig
 }
 
 func loadConfig(file string) (*FileConfig, error) {
@@ -553,6 +557,31 @@ func loadConfig(file string) (*FileConfig, error) {
 	err = cfg.Section("ProxyServer").MapTo(&config.ProxyServer)
 	if err != nil {
 		return nil, err
+	}
+
+	for _, section := range cfg.Sections() {
+		if strings.HasPrefix(section.Name(), "LanConfig-") {
+			lanConfig := LanFileConfig{}
+			err := section.MapTo(&lanConfig)
+			if err != nil {
+				return nil, err
+			}
+
+			// Set default protocol to TCP if not specified
+			if lanConfig.Protocol == "" {
+				lanConfig.Protocol = "tcp"
+			}
+
+			config.LanConfigs = append(config.LanConfigs, lanConfig)
+			proxyConfigMap[lanConfig.IP] = ProxyConfig{
+				Server:   lanConfig.Server,
+				Port:     lanConfig.Port,
+				Username: lanConfig.Username,
+				Password: lanConfig.Password,
+				Protocol: lanConfig.Protocol,
+			}
+			upDNSMap[lanConfig.IP] = UpDNSConfig{lanConfig.UpDNS}
+		}
 	}
 
 	return config, nil
@@ -584,9 +613,12 @@ func main() {
 	// Initialize proxy and upstream DNS configuration for specific IP range
 	for i := 2; i <= 30; i++ {
 		ip := "172.18.1." + strconv.Itoa(i)
-		proxyConfigMap[ip] = proxyConfigMap["default"]
+		// we use default if 'ip' does not exist in config
+		if _, exists := proxyConfigMap[ip]; !exists {
+			proxyConfigMap[ip] = proxyConfigMap["default"]
+			upDNSMap[ip] = upDNSMap["default"]
+		}
 		cacheMap[ip] = NewCache()
-		upDNSMap[ip] = upDNSMap["default"]
 	}
 
 	// Create DNS server
