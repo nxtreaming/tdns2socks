@@ -42,7 +42,7 @@ type CacheEntry struct {
 
 // Cache represents a DNS cache with LRU eviction policy
 type Cache struct {
-	mu      sync.Mutex
+	mu      sync.RWMutex
 	entries map[string]*list.Element
 	lru     *list.List
 }
@@ -67,8 +67,8 @@ func NewCache() *Cache {
 
 // Get retrieves a DNS response from the cache
 func (c *Cache) Get(key string) (*dns.Msg, bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
+	c.mu.RLock()
+	defer c.mu.RUnlock()
 	if el, found := c.entries[key]; found {
 		c.lru.MoveToFront(el)
 		return el.Value.(*entry).value.Msg, true
