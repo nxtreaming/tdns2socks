@@ -5,11 +5,6 @@ import (
 	"container/list"
 	"encoding/binary"
 	"fmt"
-	"github.com/gin-gonic/gin"
-	"github.com/miekg/dns"
-	"github.com/sirupsen/logrus"
-	"golang.org/x/net/proxy"
-	"gopkg.in/ini.v1"
 	"net"
 	"os"
 	"os/signal"
@@ -18,6 +13,12 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/gin-gonic/gin"
+	"github.com/miekg/dns"
+	"github.com/sirupsen/logrus"
+	"golang.org/x/net/proxy"
+	"gopkg.in/ini.v1"
 )
 
 // ProxyConfig represents the configuration for a proxy server
@@ -144,6 +145,7 @@ var (
 
 var log = logrus.New()
 
+// extractAnswerSection extracts IPs from the Answer Section
 func extractAnswerSection(response *dns.Msg) string {
 	if response == nil {
 		return ""
@@ -163,10 +165,11 @@ func extractAnswerSection(response *dns.Msg) string {
 			answerLines = append(answerLines, filteredAnswer)
 		}
 	}
-	// Join all lines with a newline character and add an additional newline at the end
+	// Join all lines with a newline character and add a newline at the end
 	return strings.Join(answerLines, "\n") + "\n"
 }
 
+// executeDNSQuery performs the DNS query based on the protocol
 func executeDNSQuery(domain string, conn net.Conn, upDNS, protocol string) (*dns.Msg, error) {
 	msg := new(dns.Msg)
 	msg.SetQuestion(dns.Fqdn(domain), dns.TypeA)
