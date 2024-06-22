@@ -254,8 +254,9 @@ func executeDNSQuery(domain string, conn net.Conn, upDNS, protocol string) (*dns
 		}
 		log.Debugf("Received UDP response from %v, data: %x", addr, responseBuf[:n])
 
-		// Remove the SOCKS5 UDP header
-		if n < 10 {
+		// Remove the SOCKS5 UDP header and check for a minimum DNS response length
+		const minDNSResponseLength = 12 // DNS header + at least one RR
+		if n < 10+minDNSResponseLength {
 			return nil, fmt.Errorf("invalid UDP response length")
 		}
 		udpResponseData := responseBuf[10:n]
