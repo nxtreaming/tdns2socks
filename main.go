@@ -135,12 +135,12 @@ func minTTL(msg *dns.Msg) uint32 {
 
 // Global variables
 var (
-	proxyConfigMap = make(map[string]ProxyConfig)
-	cacheMap       = make(map[string]*Cache)
-	upDNSMap       = make(map[string]UpDNSConfig)
-	defaultUpDNS   = "8.8.8.8:53"
-	configDnsMu    sync.RWMutex
-	configProxyMu  sync.RWMutex
+	proxyConfigMap  = make(map[string]ProxyConfig)
+	cacheMap        = make(map[string]*Cache)
+	upstreamDNSMap  = make(map[string]UpDNSConfig)
+	defaultUpstream = "8.8.8.8:53"
+	configDnsMu     sync.RWMutex
+	configProxyMu   sync.RWMutex
 )
 
 var log = logrus.New()
@@ -481,9 +481,9 @@ func DNSHandler(w dns.ResponseWriter, req *dns.Msg) {
 	}
 
 	configDnsMu.RLock()
-	upstreamDNSConfig, exists := upDNSMap[sourceIP]
+	upstreamDNSConfig, exists := upstreamDNSMap[sourceIP]
 	if !exists {
-		upstreamDNSConfig = UpDNSConfig{UpDNS: defaultUpDNS}
+		upstreamDNSConfig = UpDNSConfig{UpDNS: defaultUpstream}
 	}
 	upDNS := upstreamDNSConfig.UpDNS
 	configDnsMu.RUnlock()
@@ -494,7 +494,7 @@ func DNSHandler(w dns.ResponseWriter, req *dns.Msg) {
 	if err != nil {
 		m.SetRcode(req, dns.RcodeServerFailure)
 		w.WriteMsg(m)
-		log.Errorf("DNS query for domain: %s failed: %v", domain, err)
+		log.Errorf("DNS query for domain: %s from IP: %s failed with error: %v", domain, sourceIP, err)
 		return
 	}
 
@@ -519,6 +519,11 @@ func UpdateProxyConfig(c *gin.Context) {
 	configProxyMu.Lock()
 	defer configProxyMu.Unlock()
 	for ip, config := range newConfig {
+		// Validate the new proxy configurations
+		if config.Server == "" || config.Port == 0 || config.Protocol == "" {
+			c.JSON(400, gin.H{"error": fmt.Sprintf("Invalid proxy configuration for IP %s", ip)})
+			return
+		}
 		proxyConfigMap[ip] = config
 	}
 
@@ -535,7 +540,18 @@ func UpdateUpDNSConfig(c *gin.Context) {
 
 	configDnsMu.Lock()
 	for ip, dnsConfig := range newConfig {
-		upDNSMap[ip] = dnsConfig
+		// Validate the new upstream DNS configurations
+		if dnsConfig.UpDNS == "" {
+			c.JSON(400, gin.H{"error": fmt.Sprintf("Invalid upstream DNS configuration for IP %s", ip)})
+			return
+		}
+
+		// Check if UpDNS has a valid format (e.g., "8.8.8.8:53")
+		if _, _, err := net.SplitHostPort(dnsConfig.UpDNS); err != nil {
+			c.JSON(400, gin.H{"error": fmt.Sprintf("Invalid upstream DNS format for IP %s: %v", ip, err)})
+			return
+		}
+		upstreamDNSMap[ip] = dnsConfig
 	}
 	configDnsMu.Unlock()
 
@@ -568,13 +584,17 @@ type FileConfig struct {
 func loadConfig(file string) (*FileConfig, error) {
 	cfg, err := ini.Load(file)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to load config file: %v", err)
 	}
 
 	config := &FileConfig{}
 	err = cfg.Section("ProxyServer").MapTo(&config.ProxyServer)
 	if err != nil {
 		return nil, err
+	}
+	// Validate loaded configuration
+	if config.ProxyServer.Server == "" || config.ProxyServer.Port == 0 || config.ProxyServer.Protocol == "" {
+		return nil, fmt.Errorf("invalid proxy server configuration")
 	}
 
 	for _, section := range cfg.Sections() {
@@ -598,7 +618,7 @@ func loadConfig(file string) (*FileConfig, error) {
 				Password: lanConfig.Password,
 				Protocol: lanConfig.Protocol,
 			}
-			upDNSMap[lanConfig.IP] = UpDNSConfig{lanConfig.UpDNS}
+			upstreamDNSMap[lanConfig.IP] = UpDNSConfig{lanConfig.UpDNS}
 		}
 	}
 
@@ -626,7 +646,7 @@ func main() {
 		Password: config.ProxyServer.Password,
 		Protocol: config.ProxyServer.Protocol,
 	}
-	upDNSMap["default"] = UpDNSConfig{UpDNS: defaultUpDNS}
+	upstreamDNSMap["default"] = UpDNSConfig{UpDNS: defaultUpstream}
 
 	// Initialize proxy and upstream DNS configuration for specific IP range
 	for i := 2; i <= 30; i++ {
@@ -634,7 +654,7 @@ func main() {
 		// we use default if 'ip' does not exist in config
 		if _, exists := proxyConfigMap[ip]; !exists {
 			proxyConfigMap[ip] = proxyConfigMap["default"]
-			upDNSMap[ip] = upDNSMap["default"]
+			upstreamDNSMap[ip] = upstreamDNSMap["default"]
 		}
 		cacheMap[ip] = NewCache()
 	}
