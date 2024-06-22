@@ -70,6 +70,8 @@ func NewCache() *Cache {
 func (c *Cache) Get(key string) (*dns.Msg, bool) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
+	c.cleanExpiredLocked()
+
 	if el, found := c.entries[key]; found {
 		c.lru.MoveToFront(el)
 		return el.Value.(*entry).value.Msg, true
