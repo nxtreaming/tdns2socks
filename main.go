@@ -58,6 +58,35 @@ const (
 	MaxCacheEntries = 1000
 )
 
+// minTTL calculates the minimum TTL from a DNS message
+func minTTL(msg *dns.Msg) uint32 {
+	minTTL := ^uint32(0)
+	for _, ans := range msg.Answer {
+		if ans.Header().Ttl < minTTL {
+			minTTL = ans.Header().Ttl
+		}
+	}
+	return minTTL
+}
+
+// scheduleExpiration schedules the expiration of a cache entry
+func (c *Cache) scheduleExpiration(e *entry) {
+	time.AfterFunc(time.Until(e.value.ExpiresAt), func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+
+		if el, found := c.entries[e.key]; found && el.Value.(*entry).value.ExpiresAt == e.value.ExpiresAt {
+			c.removeElement(el)
+		}
+	})
+}
+
+// removeElement removes an element from the cache
+func (c *Cache) removeElement(el *list.Element) {
+	c.lru.Remove(el)
+	delete(c.entries, el.Value.(*entry).key)
+}
+
 // NewCache creates a new Cache
 func NewCache() *Cache {
 	return &Cache{
@@ -69,36 +98,30 @@ func NewCache() *Cache {
 // Get retrieves a DNS response from the cache
 func (c *Cache) Get(key string) (*dns.Msg, bool) {
 	c.mu.RLock()
-	defer c.mu.RUnlock()
-	c.cleanExpiredLocked()
-
-	if el, found := c.entries[key]; found {
+	el, found := c.entries[key]
+	if found && time.Now().Before(el.Value.(*entry).value.ExpiresAt) {
 		c.lru.MoveToFront(el)
-		return el.Value.(*entry).value.Msg, true
+		msg := el.Value.(*entry).value.Msg
+		c.mu.RUnlock()
+		return msg, true
+	}
+	c.mu.RUnlock()
+
+	if found {
+		c.mu.Lock()
+		// Re-check if the element is still present and expired, then remove it
+		if el, stillFound := c.entries[key]; stillFound && time.Now().After(el.Value.(*entry).value.ExpiresAt) {
+			c.removeElement(el)
+		}
+		c.mu.Unlock()
 	}
 	return nil, false
-}
-
-// cleanExpiredLocked cleans the expired entries from the locked cache
-func (c *Cache) cleanExpiredLocked() {
-	now := time.Now()
-	var next *list.Element
-
-	for el := c.lru.Front(); el != nil; el = next {
-		next = el.Next()
-		entry := el.Value.(*entry)
-		if entry.value.ExpiresAt.Before(now) {
-			c.lru.Remove(el)
-			delete(c.entries, entry.key)
-		}
-	}
 }
 
 // Put adds a DNS response to the cache
 func (c *Cache) Put(key string, msg *dns.Msg) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.cleanExpiredLocked()
 
 	if el, found := c.entries[key]; found {
 		c.lru.MoveToFront(el)
@@ -110,29 +133,19 @@ func (c *Cache) Put(key string, msg *dns.Msg) {
 		if c.lru.Len() >= MaxCacheEntries {
 			el := c.lru.Back()
 			if el != nil {
-				c.lru.Remove(el)
-				delete(c.entries, el.Value.(*entry).key)
+				c.removeElement(el)
 			}
 		}
-		c.entries[key] = c.lru.PushFront(&entry{
+		newEntry := &entry{
 			key: key,
 			value: CacheEntry{
 				Msg:       msg,
 				ExpiresAt: time.Now().Add(time.Duration(minTTL(msg)) * time.Second),
 			},
-		})
-	}
-}
-
-// minTTL calculates the minimum TTL from a DNS message
-func minTTL(msg *dns.Msg) uint32 {
-	minTTL := ^uint32(0)
-	for _, ans := range msg.Answer {
-		if ans.Header().Ttl < minTTL {
-			minTTL = ans.Header().Ttl
 		}
+		c.entries[key] = c.lru.PushFront(newEntry)
+		c.scheduleExpiration(newEntry)
 	}
-	return minTTL
 }
 
 // Global variables
