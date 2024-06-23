@@ -47,6 +47,7 @@ type Cache struct {
 	mu      sync.RWMutex
 	entries map[string]*list.Element
 	lru     *list.List
+	timers  map[string]*time.Timer
 }
 
 type entry struct {
@@ -73,8 +74,8 @@ func minTTL(msg *dns.Msg) uint32 {
 }
 
 // scheduleExpiration schedules the expiration of a cache entry
-func (c *Cache) scheduleExpiration(e *entry) {
-	time.AfterFunc(time.Until(e.value.ExpiresAt), func() {
+func (c *Cache) scheduleExpiration(e *entry) *time.Timer {
+	return time.AfterFunc(time.Until(e.value.ExpiresAt), func() {
 		c.mu.Lock()
 		defer c.mu.Unlock()
 
@@ -86,8 +87,13 @@ func (c *Cache) scheduleExpiration(e *entry) {
 
 // removeElement removes an element from the cache
 func (c *Cache) removeElement(el *list.Element) {
+	key := el.Value.(*entry).key
 	c.lru.Remove(el)
-	delete(c.entries, el.Value.(*entry).key)
+	delete(c.entries, key)
+	if timer, exists := c.timers[key]; exists {
+		timer.Stop()
+		delete(c.timers, key)
+	}
 }
 
 // NewCache creates a new Cache
@@ -95,6 +101,7 @@ func NewCache() *Cache {
 	return &Cache{
 		entries: make(map[string]*list.Element),
 		lru:     list.New(),
+		timers:  make(map[string]*time.Timer),
 	}
 }
 
@@ -132,6 +139,11 @@ func (c *Cache) Put(key string, msg *dns.Msg) {
 			Msg:       msg,
 			ExpiresAt: time.Now().Add(time.Duration(minTTL(msg)) * time.Second),
 		}
+		if timer, exists := c.timers[key]; exists {
+			timer.Stop()
+			delete(c.timers, key)
+		}
+		c.timers[key] = c.scheduleExpiration(el.Value.(*entry))
 	} else {
 		if c.lru.Len() >= MaxCacheEntries {
 			el := c.lru.Back()
@@ -147,7 +159,7 @@ func (c *Cache) Put(key string, msg *dns.Msg) {
 			},
 		}
 		c.entries[key] = c.lru.PushFront(newEntry)
-		c.scheduleExpiration(newEntry)
+		c.timers[key] = c.scheduleExpiration(newEntry)
 	}
 }
 
@@ -713,6 +725,15 @@ func main() {
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
 	<-sigChan
+
+	for _, cache := range cacheMap {
+		cache.mu.Lock()
+		for key, timer := range cache.timers {
+			timer.Stop()
+			delete(cache.timers, key)
+		}
+		cache.mu.Unlock()
+	}
 
 	log.Println("Shutting down servers...")
 }
