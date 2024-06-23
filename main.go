@@ -32,6 +32,7 @@ type ProxyConfig struct {
 
 // UpDNSConfig represents the configuration for an upstream DNS server
 type UpDNSConfig struct {
+	// ip:port, port is 53(Legacy Over UDP/TCP), 853(DoT over TCP) ,443(HTTPS over TCP)
 	UpDNS string `json:"updns"`
 }
 
@@ -56,6 +57,8 @@ type entry struct {
 const (
 	// MaxCacheEntries is the maximum number of cache entries per source IP
 	MaxCacheEntries = 1000
+	// SOCKS5 DNS header + at least one RR
+	minDNSResponseLength = 12
 )
 
 // minTTL calculates the minimum TTL from a DNS message
@@ -283,7 +286,6 @@ func executeDNSQueryUDP(domain string, conn net.Conn, buf []byte, upDNS string) 
 	log.Debugf("Received UDP response from %v, data: %x", addr, responseBuf[:n])
 
 	// Remove the SOCKS5 UDP header and check for a minimum DNS response length
-	const minDNSResponseLength = 12 // DNS header + at least one RR
 	if n < 10+minDNSResponseLength {
 		return nil, fmt.Errorf("invalid UDP response length")
 	}
