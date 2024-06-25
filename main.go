@@ -253,7 +253,7 @@ func executeDNSQueryTCP(domain string, conn net.Conn, buf []byte) (*dns.Msg, err
 		return nil, err
 	}
 
-	log.Infof("DNS query for domain: %s succeeded. Response: %v", domain, extractAnswerSection(response))
+	log.Infof("DNS query by TCP for domain: %s succeeded. Response: %v", domain, extractAnswerSection(response))
 	return response, nil
 }
 
@@ -311,7 +311,7 @@ func executeDNSQueryUDP(domain string, conn net.Conn, buf []byte, upDNS string) 
 		return nil, err
 	}
 
-	log.Infof("DNS query for domain: %s succeeded. Response: %v", domain, extractAnswerSection(response))
+	log.Infof("DNS query by UDP for domain: %s succeeded. Response: %v", domain, extractAnswerSection(response))
 	return response, nil
 }
 
