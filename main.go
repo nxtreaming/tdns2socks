@@ -237,7 +237,7 @@ func executeDNSQueryTCP(domain string, conn net.Conn, buf []byte) (*dns.Msg, err
 	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	responseBuf := make([]byte, 1024) // Increase buffer size for larger responses
 	n, err := conn.Read(responseBuf)
-	if err != nil {
+	if err != nil || n < 2+minDNSResponseLength {
 		log.Errorf("Failed to read response: %v", err)
 		if n > 0 {
 			log.Warnf("Partial response received: %x", responseBuf[:n])
