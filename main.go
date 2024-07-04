@@ -32,7 +32,7 @@ type ProxyConfig struct {
 
 // UpDNSConfig represents the configuration for an upstream DNS server
 type UpDNSConfig struct {
-	// ip:port, port is 53(Legacy Over UDP/TCP), 853(DoT over TCP) ,443(HTTPS over TCP)
+	// ip:port, port is 53(Legacy Over UDP/TCP), 853(DoT over TCP), 443(HTTPS over TCP)
 	UpDNS string `json:"updns"`
 }
 
@@ -50,6 +50,7 @@ type Cache struct {
 	timers  map[string]*time.Timer
 }
 
+// entry represents a single element in Cache lru list
 type entry struct {
 	key   string
 	value CacheEntry
