@@ -2,7 +2,7 @@
 TDNS2SOCKS
 
 ## Reference
-https://github.com/Jigsaw-Code/outline-sdk/pull/256
+https://github.com/Jigsaw-Code/outline-sdk/pull/256  
 https://github.com/tailscale/tailscale/pull/12623
 
 ## Public DNS lists
