@@ -3,7 +3,8 @@ TDNS2SOCKS
 
 ## Reference
 https://github.com/Jigsaw-Code/outline-sdk/pull/256  
-https://github.com/tailscale/tailscale/pull/12623
+https://github.com/tailscale/tailscale/pull/12623  
+https://github.com/hashicorp/golang-lru
 
 ## Public DNS lists
 | 114DNS          | Tencent             | Baidu         | Aliyun         | CNNIC      |
