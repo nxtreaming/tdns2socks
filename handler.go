@@ -68,40 +68,51 @@ func DNSHandler(w dns.ResponseWriter, req *dns.Msg) {
 	configProxyMu.RUnlock()
 
 	if !exists {
-		config, exists = proxyConfigMap["default"]
-		if !exists {
-			m.SetRcode(req, dns.RcodeRefused)
+		response, err := queryDNSUpstream(domain, Config.ProxyDefault.Upstream)
+		if err != nil {
+			m.SetRcode(req, dns.RcodeServerFailure)
 			w.WriteMsg(m)
+			logrus.Errorf("DNS query for domain: %s from IP: %s failed with error: %v", domain, sourceIP, err)
 			return
+		}
+
+		// Update cache
+		cache.Put(domain, response)
+
+		m.Answer = response.Answer
+		logrus.Debugf("Writing DNS response for domain: %s", domain)
+		if err := w.WriteMsg(m); err != nil {
+			logrus.Errorf("Failed to write DNS response: %v", err)
+		}
+	} else {
+		configDnsMu.RLock()
+		upstreamDNSConfig, exists := upstreamDNSMap[sourceIP]
+		if !exists {
+			upstreamDNSConfig = UpDNSConfig{UpDNS: Config.ProxyDefault.Upstream}
+		}
+		upDNS := upstreamDNSConfig.UpDNS
+		configDnsMu.RUnlock()
+
+		logrus.Debugf("Received DNS query for domain: %s from source IP: %s", domain, sourceIP)
+
+		response, err := QueryDNS(domain, config, upDNS)
+		if err != nil {
+			m.SetRcode(req, dns.RcodeServerFailure)
+			w.WriteMsg(m)
+			logrus.Errorf("DNS query for domain: %s from IP: %s failed with error: %v", domain, sourceIP, err)
+			return
+		}
+
+		// Update cache
+		cache.Put(domain, response)
+
+		m.Answer = response.Answer
+		logrus.Debugf("Writing DNS response for domain: %s", domain)
+		if err := w.WriteMsg(m); err != nil {
+			logrus.Errorf("Failed to write DNS response: %v", err)
 		}
 	}
 
-	configDnsMu.RLock()
-	upstreamDNSConfig, exists := upstreamDNSMap[sourceIP]
-	if !exists {
-		upstreamDNSConfig = UpDNSConfig{UpDNS: Config.ProxyDefault.Upstream}
-	}
-	upDNS := upstreamDNSConfig.UpDNS
-	configDnsMu.RUnlock()
-
-	logrus.Debugf("Received DNS query for domain: %s from source IP: %s", domain, sourceIP)
-
-	response, err := QueryDNS(domain, config, upDNS)
-	if err != nil {
-		m.SetRcode(req, dns.RcodeServerFailure)
-		w.WriteMsg(m)
-		logrus.Errorf("DNS query for domain: %s from IP: %s failed with error: %v", domain, sourceIP, err)
-		return
-	}
-
-	// Update cache
-	cache.Put(domain, response)
-
-	m.Answer = response.Answer
-	logrus.Debugf("Writing DNS response for domain: %s", domain)
-	if err := w.WriteMsg(m); err != nil {
-		logrus.Errorf("Failed to write DNS response: %v", err)
-	}
 }
 
 // QueryDNS queries DNS through a SOCKS5 proxy using the specified protocol (TCP or UDP)
@@ -396,4 +407,52 @@ func extractAnswerSection(response *dns.Msg) string {
 	}
 	// Join all lines with a newline character and add a newline at the end
 	return strings.Join(answerLines, "\n") + "\n"
+}
+
+func queryDNSUpstream(domain, upstreamGateway string) (*dns.Msg, error) {
+	conn, err := net.Dial("udp", upstreamGateway)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+
+	dnsQuery := new(dns.Msg)
+	dnsQuery.SetQuestion(dns.Fqdn(domain), dns.TypeA)
+	dnsQuery.RecursionDesired = true
+
+	// 将 DNS 查询消息序列化为字节数组
+	queryBytes, err := dnsQuery.Pack()
+	if err != nil {
+		logrus.Errorf("Message serialized as byte array error: %v", err)
+		return nil, err
+	}
+
+	// 发送DNS查询到上游网关
+	_, err = conn.Write(queryBytes)
+	if err != nil {
+		logrus.Errorf("Send DNS query to upstream gateway error: %v", err)
+		return nil, err
+	}
+
+	// 设置超时时间
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+
+	// 接收响应
+	buffer := make([]byte, 512)
+	n, err := conn.Read(buffer)
+	if err != nil {
+		logrus.Errorf("Receive Response Error: %v", err)
+
+		return nil, err
+	}
+
+	// 将响应字节数组反序列化为DNS消息
+	response := new(dns.Msg)
+	err = response.Unpack(buffer[:n])
+	if err != nil {
+		logrus.Errorf("Deserialize response byte array error: %v", err)
+		return nil, err
+	}
+
+	return response, nil
 }
