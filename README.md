@@ -6,7 +6,8 @@ https://github.com/Jigsaw-Code/outline-sdk/pull/256
 https://github.com/tailscale/tailscale/pull/12623  
 https://github.com/tailscale/tailscale/pull/13037  
 https://github.com/hashicorp/golang-lru  
-https://github.com/Jigsaw-Code/outline-sdk/pull/257
+https://github.com/Jigsaw-Code/outline-sdk/pull/257  
+https://github.com/shadowsocks/shadowsocks-rust/pull/1616
 
 ## Public DNS lists
 | 114DNS          | Tencent             | Baidu         | Aliyun         | CNNIC      |
