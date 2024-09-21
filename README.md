@@ -8,6 +8,7 @@ https://github.com/tailscale/tailscale/pull/13037
 https://github.com/hashicorp/golang-lru  
 https://github.com/Jigsaw-Code/outline-sdk/pull/257  
 https://github.com/Jigsaw-Code/outline-sdk/releases/tag/v0.0.17  
+https://pkg.go.dev/github.com/Jigsaw-Code/outline-sdk/transport/socks5  
 https://github.com/shadowsocks/shadowsocks-rust/pull/1616
 
 ## Public DNS lists
